@@ -1,0 +1,42 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'sub-returns'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=sub-returns",
+                    "--package=sub-returns"
+                ],
+                "filter": {
+                    "name": "sub-returns",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'sub-returns'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=sub-returns",
+                    "--package=sub-returns"
+                ],
+                "filter": {
+                    "name": "sub-returns",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

@@ -1,17 +1,14 @@
 use std::{
-    ffi::OsStr,
-    fs::read_to_string,
-    fs::metadata,
-    path::{Path, PathBuf}, 
     collections::HashMap,
-    time::SystemTime,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
-use clap::Parser;
-use chrono::{DateTime, Local, Utc, TimeZone};
+use chrono::{DateTime, Local, TimeZone, Utc};
 use chrono_tz::{OffsetName, Tz};
+use clap::Parser;
 use iana_time_zone::get_timezone;
+use rusqlite::Connection;
 
 macro_rules! debug_println {
     ($($arg:tt)*) => (if ::std::cfg!(debug_assertions) { ::std::println!($($arg)*); })
@@ -32,73 +29,49 @@ struct LaunchArgs {
 fn main_daemon() -> anyhow::Result<()> {
     use notify_rust::Notification;
 
-    let user_dirs = directories::UserDirs::new().unwrap();
-    let mut mtimes: HashMap<PathBuf, SystemTime> = HashMap::new();
-    let mut chars: HashMap<u64, Character> = HashMap::new();
+    let mut notifs_data: HashMap<i64, NotifyMeta> = HashMap::new();
+    let db = open_db()?;
     loop {
-        let sub_folder: PathBuf = [user_dirs.home_dir(), Path::new(SUBTRACKER_FOLDER)].iter().collect();
-    
-        for entry in sub_folder.read_dir()? {
-            let Ok(entry) = entry else { continue };
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            if !kind.is_file() {
-                continue;
+        let subs = get_submarine_info(&db)?;
+        for sub in subs {
+            let mut meta = notifs_data
+                .get(&sub.id)
+                .cloned()
+                .unwrap_or_else(|| NotifyMeta {
+                    submarine_id: sub.id,
+                    will_notify: true,
+                    last_return_time: Default::default(),
+                });
+            if meta.last_return_time != sub.return_time && sub.return_time > Local::now() {
+                meta.will_notify = true;
+                meta.last_return_time = sub.return_time;
+                let time = sub.return_time.with_timezone(&Local);
+                debug_println!(
+                    "notification scheduled for {subname} {time}",
+                    subname = sub.name
+                );
             }
-            let path = entry.path();
-            if path.extension() != Some(OsStr::new("json")) {
-                continue;
+
+            if meta.will_notify && sub.return_time <= Local::now() {
+                meta.will_notify = false;
+                let summary = format!("{name} returned", name = sub.name);
+                let time = sub.return_time.with_timezone(&Local);
+                let time_str = time.format("%b %e, %Y, %I:%M%p").to_string();
+                let body = format!(
+                    "{name} ({char_name} «{tag}») returned on {time_str}",
+                    name = sub.name,
+                    char_name = sub.character_name,
+                    tag = sub.tag
+                );
+                Notification::new()
+                    .summary(&summary)
+                    .body(&body)
+                    .icon("dialog-information")
+                    .show()?;
             }
-            let Ok(meta) = metadata(&path) else {
-                eprintln!("Failed to stat {:?}", path);
-                continue;
-            };
-            let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-            let last_mtime = mtimes.get(&path);
-            if last_mtime.is_none() || last_mtime.is_some_and(|t| mtime > *t) {
-                mtimes.insert(path.clone(), mtime);
-                let Ok(contents) = read_to_string(&path) else {
-                    eprintln!("Failed to open {:?}", path);
-                    continue;
-                };
-                let Ok(mut data) = serde_json::from_str::<Character>(&contents) else {
-                    eprintln!("Failed to deserialize {:?}", path);
-                    continue;
-                };
-                debug_println!("reloading: {name}", name = data.character_name);
-                for sub in &mut data.submarines {
-                    if sub.return_time > Local::now() {
-                        sub.will_notify = true;
-                        let time = sub.return_time.with_timezone(&Local);
-                        debug_println!("notification scheduled for {subname} {time}", subname = sub.name);
-                    }
-                }
-                chars.insert(data.local_content_id, data);
-            }
+            notifs_data.insert(sub.id, meta);
         }
 
-        for (_, char_data) in &mut chars {
-            for sub in &mut char_data.submarines {
-                if sub.will_notify && sub.return_time <= Local::now() {
-                    sub.will_notify = false;
-                    let summary = format!("{name} returned", name = sub.name);
-                    let time = sub.return_time.with_timezone(&Local);
-                    let time_str = time.format("%b %e, %Y, %I:%M%p").to_string();
-                    let body = format!(
-                        "{name} ({char_name} «{tag}») returned on {time_str}", 
-                        name = sub.name, 
-                        char_name = char_data.character_name, 
-                        tag = char_data.tag
-                    );
-                    Notification::new()
-                        .summary(&summary)
-                        .body(&body)
-                        .icon("dialog-information")
-                        .show()?;
-                }
-            }
-        }
         std::thread::sleep(Duration::from_secs(1));
     }
 }
@@ -108,68 +81,77 @@ fn main() -> anyhow::Result<()> {
     if args.daemon {
         return main_daemon();
     }
-    let user_dirs = directories::UserDirs::new().unwrap();
-    let sub_folder: PathBuf = [user_dirs.home_dir(), Path::new(SUBTRACKER_FOLDER)].iter().collect();
     let tz_str = get_timezone().unwrap();
     let tz: Tz = tz_str.parse().unwrap();
     let offset = tz.offset_from_utc_date(&Utc::now().date_naive());
     let tz_abbr = offset.abbreviation();
-
-    for entry in sub_folder.read_dir()? {
-        let Ok(entry) = entry else { continue };
-        let Ok(kind) = entry.file_type() else {
-            continue;
-        };
-        if !kind.is_file() {
-            continue;
-        }
-        let path = entry.path();
-        if path.extension() != Some(OsStr::new("json")) {
-            continue;
-        }
-        let Ok(contents) = read_to_string(&path) else {
-            eprintln!("Failed to open {:?}", path);
-            continue;
-        };
-        let Ok(mut data) = serde_json::from_str::<Character>(&contents) else {
-            eprintln!("Failed to deserialize {:?}", path);
-            continue;
-        };
-
-        data.submarines.sort_by(|a, b| a.return_time.cmp(&b.return_time));
-        println!("{char} «{tag}»:", char = data.character_name, tag = data.tag);
-        let longest_name = data.submarines
-            .iter()
-            .map(|s| s.name.len())
-            .max()
-            .unwrap_or(0);
-        for sub in data.submarines {
-            let padding = " ".repeat(longest_name - sub.name.len());
-            let time = sub.return_time.with_timezone(&Local);
-            let time_str = time.format("%e %B %Y at %I:%M:%S %p").to_string();
-            println!("  {name}:{padding} {time_str} {tz_abbr}", name = sub.name);
-        }
+    let db = open_db()?;
+    let subs = get_submarine_info(&db)?;
+    let longest_name = subs.iter().map(|s| s.name.len()).max().unwrap_or(0);
+    for sub in subs {
+        let padding = " ".repeat(longest_name - sub.name.len());
+        let time = sub.return_time.with_timezone(&Local);
+        let time_str = time.format("%e %B %Y at %I:%M:%S %p").to_string();
+        println!("{name}:{padding} {time_str} {tz_abbr}", name = sub.name);
     }
 
     Ok(())
 }
 
-#[derive(serde::Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-pub struct Character {
-    pub character_name: String,
-    pub world: String,
-    pub tag: String,
-    pub local_content_id: u64,
-    pub submarines: Vec<Submarine>,
+fn open_db() -> anyhow::Result<Connection> {
+    let user_dirs = directories::UserDirs::new().unwrap();
+    let sub_db_file: PathBuf = [
+        user_dirs.home_dir(),
+        Path::new(SUBTRACKER_FOLDER),
+        Path::new("submarine-sqlite.db"),
+    ]
+    .iter()
+    .collect();
+    let db = Connection::open_with_flags(sub_db_file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    Ok(db)
 }
 
-#[derive(serde::Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-pub struct Submarine {
+fn get_submarine_info(db: &Connection) -> anyhow::Result<Vec<SubInfo>> {
+    let query = "
+    SELECT
+        submarine.SubmarineId as id,
+        submarine.Name AS name, 
+        submarine.Return AS return_time, 
+        freecompany.FreeCompanyTag as tag, 
+        freecompany.CharacterName as character_name
+    FROM submarine
+    JOIN freecompany
+    ON submarine.FreeCompanyId = freecompany.FreeCompanyId
+    ORDER BY return_time ASC
+    ";
+    let mut stmt = db.prepare(query)?;
+    let subs: Vec<SubInfo> = stmt
+        .query_map([], |row| {
+            let timestamp: i64 = row.get(2)?;
+            Ok(SubInfo {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                return_time: Utc.timestamp_opt(timestamp, 0).single().unwrap(),
+                tag: row.get(3)?,
+                character_name: row.get(4)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(subs)
+}
+
+#[derive(Clone)]
+pub struct NotifyMeta {
+    pub submarine_id: i64,
+    pub will_notify: bool,
+    pub last_return_time: DateTime<Utc>,
+}
+
+pub struct SubInfo {
+    pub id: i64,
     pub name: String,
     pub return_time: DateTime<Utc>,
-    #[serde(skip)]
-    pub will_notify: bool,
+    pub tag: String,
+    pub character_name: String,
 }
-
