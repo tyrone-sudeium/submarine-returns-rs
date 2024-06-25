@@ -124,11 +124,11 @@ fn open_db() -> anyhow::Result<Connection> {
 fn get_submarine_info(db: &Connection) -> anyhow::Result<Vec<SubInfo>> {
     let query = "
     SELECT
-        submarine.SubmarineId as id,
+        submarine.SubmarineId AS id,
         submarine.Name AS name, 
         submarine.Return AS return_time, 
-        freecompany.FreeCompanyTag as tag, 
-        freecompany.CharacterName as character_name
+        freecompany.FreeCompanyTag AS tag, 
+        freecompany.CharacterName AS character_name
     FROM submarine
     JOIN freecompany
     ON submarine.FreeCompanyId = freecompany.FreeCompanyId
