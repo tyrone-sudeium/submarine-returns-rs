@@ -86,13 +86,23 @@ fn main() -> anyhow::Result<()> {
     let offset = tz.offset_from_utc_date(&Utc::now().date_naive());
     let tz_abbr = offset.abbreviation();
     let db = open_db()?;
-    let subs = get_submarine_info(&db)?;
-    let longest_name = subs.iter().map(|s| s.name.len()).max().unwrap_or(0);
-    for sub in subs {
-        let padding = " ".repeat(longest_name - sub.name.len());
-        let time = sub.return_time.with_timezone(&Local);
-        let time_str = time.format("%e %B %Y at %I:%M:%S %p").to_string();
-        println!("{name}:{padding} {time_str} {tz_abbr}", name = sub.name);
+    let all_subs = get_submarine_info(&db)?;
+    let longest_name = all_subs.iter().map(|s| s.name.len()).max().unwrap_or(0);
+    let mut subs_by_char: HashMap<String, Vec<SubInfo>> = HashMap::new();
+    for sub in all_subs {
+        let char_ident = format!("{name} «{fc_tag}»", name = sub.character_name, fc_tag = sub.tag);
+        subs_by_char.entry(char_ident)
+            .or_insert_with(Vec::new)
+            .push(sub);
+    }
+    for (char, subs) in subs_by_char {
+        println!("{char}:");
+        for sub in subs {
+            let padding = " ".repeat(longest_name - sub.name.len());
+            let time = sub.return_time.with_timezone(&Local);
+            let time_str = time.format("%e %B %Y at %I:%M:%S %p").to_string();
+            println!("  {name}:{padding} {time_str} {tz_abbr}", name = sub.name);
+        }
     }
 
     Ok(())
