@@ -2,12 +2,13 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     time::Duration,
+    env,
 };
 
 use chrono::{DateTime, Local, TimeZone, Utc};
 use chrono_tz::{OffsetName, Tz};
 use clap::Parser;
-use iana_time_zone::get_timezone;
+use iana_time_zone::{get_timezone, GetTimezoneError};
 use rusqlite::Connection;
 
 macro_rules! debug_println {
@@ -81,7 +82,7 @@ fn main() -> anyhow::Result<()> {
     if args.daemon {
         return main_daemon();
     }
-    let tz_str = get_timezone().unwrap();
+    let tz_str = mysql_real_get_timezone().unwrap();
     let tz: Tz = tz_str.parse().unwrap();
     let offset = tz.offset_from_utc_date(&Utc::now().date_naive());
     let tz_abbr = offset.abbreviation();
@@ -106,6 +107,13 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn mysql_real_get_timezone() -> Option<String> {
+    // first check for TZ since upstream doesn't
+    let env_tz = env::var("TZ").ok();
+    let tz = env_tz.or(get_timezone().ok());
+    return tz;
 }
 
 fn open_db() -> anyhow::Result<Connection> {
