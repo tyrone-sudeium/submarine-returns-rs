@@ -1,14 +1,14 @@
 use std::{
     collections::HashMap,
+    env,
     path::{Path, PathBuf},
     time::Duration,
-    env,
 };
 
 use chrono::{DateTime, Local, TimeZone, Utc};
 use chrono_tz::{OffsetName, Tz};
 use clap::Parser;
-use iana_time_zone::{get_timezone, GetTimezoneError};
+use iana_time_zone::get_timezone;
 use rusqlite::Connection;
 
 macro_rules! debug_println {
@@ -91,8 +91,13 @@ fn main() -> anyhow::Result<()> {
     let longest_name = all_subs.iter().map(|s| s.name.len()).max().unwrap_or(0);
     let mut subs_by_char: HashMap<String, Vec<SubInfo>> = HashMap::new();
     for sub in all_subs {
-        let char_ident = format!("{name} «{fc_tag}»", name = sub.character_name, fc_tag = sub.tag);
-        subs_by_char.entry(char_ident)
+        let char_ident = format!(
+            "{name} «{fc_tag}»",
+            name = sub.character_name,
+            fc_tag = sub.tag
+        );
+        subs_by_char
+            .entry(char_ident)
             .or_insert_with(Vec::new)
             .push(sub);
     }
