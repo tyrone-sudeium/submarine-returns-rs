@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context;
 use chrono::{DateTime, Local, TimeZone, Utc};
 use chrono_tz::{OffsetName, Tz};
 use clap::Parser;
@@ -25,13 +26,15 @@ const SUBTRACKER_FOLDER: &str = ".xlcore/pluginConfigs/SubmarineTracker";
 struct LaunchArgs {
     #[arg(short, long)]
     daemon: bool,
+    #[arg(short, long)]
+    update: Option<String>,
 }
 
 fn main_daemon() -> anyhow::Result<()> {
     use notify_rust::Notification;
 
     let mut notifs_data: HashMap<i64, NotifyMeta> = HashMap::new();
-    let db = open_db()?;
+    let db = open_db(None)?;
     loop {
         let subs = get_submarine_info(&db)?;
         for sub in subs {
@@ -82,11 +85,21 @@ fn main() -> anyhow::Result<()> {
     if args.daemon {
         return main_daemon();
     }
+    if let Some(updated) = args.update {
+        let parse_date = DateTime::parse_from_rfc2822(&updated)
+            .with_context(|| format!("Date format incorrect for '{}', RFC2822 expected\n\nExample: Tue, 1 Jul 2003 10:52:37 +1000", updated))?;
+        let updated_timestamp = parse_date.timestamp();
+        let db = open_db(Some(rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE))?;
+        db.execute("UPDATE submarine SET Return = (?1)", [updated_timestamp])?;
+        db.close().unwrap();
+        println!("All submarine return times updated! These are the new return times...");
+    }
+
     let tz_str = mysql_real_get_timezone().unwrap();
     let tz: Tz = tz_str.parse().unwrap();
     let offset = tz.offset_from_utc_date(&Utc::now().date_naive());
     let tz_abbr = offset.abbreviation();
-    let db = open_db()?;
+    let db = open_db(None)?;
     let all_subs = get_submarine_info(&db)?;
     let longest_name = all_subs.iter().map(|s| s.name.len()).max().unwrap_or(0);
     let mut subs_by_char: HashMap<String, Vec<SubInfo>> = HashMap::new();
@@ -121,7 +134,7 @@ fn mysql_real_get_timezone() -> Option<String> {
     return tz;
 }
 
-fn open_db() -> anyhow::Result<Connection> {
+fn open_db(flags: Option<rusqlite::OpenFlags>) -> anyhow::Result<Connection> {
     let user_dirs = directories::UserDirs::new().unwrap();
     let sub_db_file: PathBuf = [
         user_dirs.home_dir(),
@@ -130,7 +143,10 @@ fn open_db() -> anyhow::Result<Connection> {
     ]
     .iter()
     .collect();
-    let db = Connection::open_with_flags(sub_db_file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let db = Connection::open_with_flags(
+        sub_db_file,
+        flags.unwrap_or(rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY),
+    )?;
     Ok(db)
 }
 
