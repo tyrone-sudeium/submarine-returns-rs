@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Context;
-use chrono::{DateTime, Local, TimeZone, Utc};
+use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::{OffsetName, Tz};
 use clap::Parser;
 use iana_time_zone::get_timezone;
@@ -86,8 +86,10 @@ fn main() -> anyhow::Result<()> {
         return main_daemon();
     }
     if let Some(updated) = args.update {
-        let parse_date = DateTime::parse_from_rfc2822(&updated)
-            .with_context(|| format!("Date format incorrect for '{}', RFC2822 expected\n\nExample: Tue, 1 Jul 2003 10:52:37 +1000", updated))?;
+        let parse_date = NaiveDateTime::parse_from_str(&updated, "%m/%d/%Y %H:%M")
+            .with_context(|| format!("Date format incorrect for '{}', FFXIV format expected\n\nExample: 11/14/2024 16:59", updated))?
+            .and_local_timezone(Local)
+            .unwrap();
         let updated_timestamp = parse_date.timestamp();
         let db = open_db(Some(rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE))?;
         db.execute("UPDATE submarine SET Return = (?1)", [updated_timestamp])?;
