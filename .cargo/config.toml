@@ -1,0 +1,3 @@
+[env]
+PUSHOVER_BRIDGE_PSK = "default"
+PUSHOVER_BRIDGE_URL = "http://example.com"

@@ -11,6 +11,11 @@ use chrono_tz::{OffsetName, Tz};
 use clap::Parser;
 use iana_time_zone::get_timezone;
 use rusqlite::Connection;
+use reqwest::blocking::Client;
+use serde_json::{
+    json,
+    Value
+};
 
 macro_rules! debug_println {
     ($($arg:tt)*) => (if ::std::cfg!(debug_assertions) { ::std::println!($($arg)*); })
@@ -33,10 +38,16 @@ struct LaunchArgs {
 fn main_daemon() -> anyhow::Result<()> {
     use notify_rust::Notification;
 
+    // Not proud of this but it meets my needs ok
+    let bridge_psk: &'static str = env!("PUSHOVER_BRIDGE_PSK");
+    let bridge_url: &'static str = env!("PUSHOVER_BRIDGE_URL");
+    let client = Client::new();
+
     let mut notifs_data: HashMap<i64, NotifyMeta> = HashMap::new();
     let db = open_db(None)?;
     loop {
         let subs = get_submarine_info(&db)?;
+        let mut bridge_json_payload = serde_json::Map::new();
         for sub in subs {
             let mut meta = notifs_data
                 .get(&sub.id)
@@ -54,6 +65,23 @@ fn main_daemon() -> anyhow::Result<()> {
                     "notification scheduled for {subname} {time}",
                     subname = sub.name
                 );
+
+                // Add a notification object to the pushover bridge API JSON payload
+                let time = sub.return_time.with_timezone(&Local);
+                let time_str = time.format("%b %e, %Y, %I:%M%p").to_string();
+                let body = format!(
+                    "{name} ({char_name} «{tag}») returned on {time_str}",
+                    name = sub.name,
+                    char_name = sub.character_name,
+                    tag = sub.tag
+                );
+                
+                let pushover_notif = json!({
+                    "title": format!("{name} returned", name = sub.name),
+                    "message": body,
+                    "timestamp": sub.return_time.timestamp_millis()
+                });
+                bridge_json_payload.insert(sub.id.to_string(), pushover_notif);
             }
 
             if meta.will_notify && sub.return_time <= Local::now() {
@@ -74,6 +102,16 @@ fn main_daemon() -> anyhow::Result<()> {
                     .show()?;
             }
             notifs_data.insert(sub.id, meta);
+        }
+        if !bridge_json_payload.is_empty() {
+            let payload = Value::Object(bridge_json_payload);
+            debug_println!("pushover bridge json: {}", payload);
+            let response = client
+                .post(bridge_url)
+                .header("Authorization", format!("Bearer {}", bridge_psk))
+                .json(&payload)
+                .send()?;
+            // ... and honestly don't care about the response. It either keeps working or it ain't
         }
 
         std::thread::sleep(Duration::from_secs(1));
