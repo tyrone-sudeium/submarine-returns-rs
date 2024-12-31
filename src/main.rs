@@ -1,8 +1,5 @@
 use std::{
-    collections::HashMap,
-    env,
-    path::{Path, PathBuf},
-    time::Duration,
+    collections::HashMap, env, path::{Path, PathBuf}, time::Duration
 };
 
 use anyhow::Context;
@@ -48,6 +45,11 @@ fn main_daemon() -> anyhow::Result<()> {
     loop {
         let subs = get_submarine_info(&db)?;
         let mut bridge_json_payload = serde_json::Map::new();
+        let mut subs_in_group: u32 = 1;
+        let mut previous_return_time: Option<DateTime<Utc>> = None;
+        let mut current_pushover_notif: Option<Value> = None;
+        let mut current_id = "".to_string();
+        let mut message_count: u32 = 0;
         for sub in subs {
             let mut meta = notifs_data
                 .get(&sub.id)
@@ -69,19 +71,52 @@ fn main_daemon() -> anyhow::Result<()> {
                 // Add a notification object to the pushover bridge API JSON payload
                 let time = sub.return_time.with_timezone(&Local);
                 let time_str = time.format("%b %e, %Y, %I:%M%p").to_string();
-                let body = format!(
-                    "{name} ({char_name} «{tag}») returned on {time_str}",
-                    name = sub.name,
-                    char_name = sub.character_name,
-                    tag = sub.tag
-                );
+                let body = if subs_in_group > 1 {
+                    format!(
+                        "{name} ({char_name} «{tag}») + {num} others returned on {time_str}",
+                        name = sub.name,
+                        char_name = sub.character_name,
+                        tag = sub.tag,
+                        num = subs_in_group - 1
+                    )
+                } else {
+                    format!(
+                        "{name} ({char_name} «{tag}») returned on {time_str}",
+                        name = sub.name,
+                        char_name = sub.character_name,
+                        tag = sub.tag
+                    )
+                };
+
+                let title = if subs_in_group > 1 {
+                    format!("{name} (+{num}) returned", name = sub.name, num = subs_in_group - 1)
+                } else {
+                    format!("{name} returned", name = sub.name)
+                };
                 
                 let pushover_notif = json!({
-                    "title": format!("{name} returned", name = sub.name),
+                    "title": title,
                     "message": body,
                     "timestamp": sub.return_time.timestamp_millis()
                 });
-                bridge_json_payload.insert(sub.id.to_string(), pushover_notif);
+                current_id = format!("{char_name}«{tag}»-{message_count}", char_name = sub.character_name, tag = sub.tag);
+                if let Some(prev_time) = previous_return_time {
+                    if sub.return_time.timestamp_millis() - prev_time.timestamp_millis() > 300000 {
+                        bridge_json_payload.insert(current_id.clone(), pushover_notif);
+                        previous_return_time = None;
+                        current_pushover_notif = None;
+                        subs_in_group = 0;
+                        message_count += 1;
+                    } else {
+                        previous_return_time = Some(sub.return_time);
+                        subs_in_group += 1;
+                        current_pushover_notif = Some(pushover_notif);
+                    }
+                } else {
+                    previous_return_time = Some(sub.return_time);
+                    subs_in_group += 1;
+                    current_pushover_notif = Some(pushover_notif);
+                }
             }
 
             if meta.will_notify && sub.return_time <= Local::now() {
@@ -103,10 +138,13 @@ fn main_daemon() -> anyhow::Result<()> {
             }
             notifs_data.insert(sub.id, meta);
         }
+        if let Some(dangling_push_notif) = current_pushover_notif {
+            bridge_json_payload.insert(current_id, dangling_push_notif);
+        }
         if !bridge_json_payload.is_empty() {
             let payload = Value::Object(bridge_json_payload);
             debug_println!("pushover bridge json: {}", payload);
-            let response = client
+            client
                 .post(bridge_url)
                 .header("Authorization", format!("Bearer {}", bridge_psk))
                 .json(&payload)
