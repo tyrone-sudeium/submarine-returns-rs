@@ -70,7 +70,7 @@ fn main_daemon() -> anyhow::Result<()> {
 
                 // Add a notification object to the pushover bridge API JSON payload
                 let time = sub.return_time.with_timezone(&Local);
-                let time_str = time.format("%b %e, %Y, %I:%M%p").to_string();
+                let time_str = time.format("%b%e, %Y, %I:%M%p").to_string();
                 let body = if subs_in_group > 1 {
                     format!(
                         "{name} ({char_name} «{tag}») + {num} others returned on {time_str}",
@@ -123,7 +123,7 @@ fn main_daemon() -> anyhow::Result<()> {
                 meta.will_notify = false;
                 let summary = format!("{name} returned", name = sub.name);
                 let time = sub.return_time.with_timezone(&Local);
-                let time_str = time.format("%b %e, %Y, %I:%M%p").to_string();
+                let time_str = time.format("%b%e, %Y, %I:%M%p").to_string();
                 let body = format!(
                     "{name} ({char_name} «{tag}») returned on {time_str}",
                     name = sub.name,
