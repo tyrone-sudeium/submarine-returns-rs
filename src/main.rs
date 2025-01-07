@@ -50,6 +50,23 @@ fn main_daemon() -> anyhow::Result<()> {
         let mut current_pushover_notif: Option<Value> = None;
         let mut current_id = "".to_string();
         let mut message_count: u32 = 0;
+        let has_changes = subs.iter().all(|sub| {
+            let meta = notifs_data
+            .get(&sub.id)
+            .cloned()
+            .unwrap_or_else(|| NotifyMeta {
+                submarine_id: sub.id,
+                will_notify: true,
+                last_return_time: Default::default(),
+            });
+            meta.last_return_time != sub.return_time && sub.return_time > Local::now()
+        });
+    
+        if !has_changes {
+            std::thread::sleep(Duration::from_secs(1));
+            continue;
+        }
+
         for sub in subs {
             let mut meta = notifs_data
                 .get(&sub.id)
@@ -67,7 +84,28 @@ fn main_daemon() -> anyhow::Result<()> {
                     "notification scheduled for {subname} {time}",
                     subname = sub.name
                 );
+            }
 
+            if meta.will_notify && sub.return_time <= Local::now() {
+                meta.will_notify = false;
+                let summary = format!("{name} returned", name = sub.name);
+                let time = sub.return_time.with_timezone(&Local);
+                let time_str = time.format("%b%e, %Y, %I:%M%p").to_string();
+                let body = format!(
+                    "{name} ({char_name} «{tag}») returned on {time_str}",
+                    name = sub.name,
+                    char_name = sub.character_name,
+                    tag = sub.tag
+                );
+                Notification::new()
+                    .summary(&summary)
+                    .body(&body)
+                    .icon("dialog-information")
+                    .show()?;
+            }
+            notifs_data.insert(sub.id, meta);
+
+            if sub.return_time > Local::now() {
                 // Add a notification object to the pushover bridge API JSON payload
                 let time = sub.return_time.with_timezone(&Local);
                 let time_str = time.format("%b%e, %Y, %I:%M%p").to_string();
@@ -118,25 +156,6 @@ fn main_daemon() -> anyhow::Result<()> {
                     current_pushover_notif = Some(pushover_notif);
                 }
             }
-
-            if meta.will_notify && sub.return_time <= Local::now() {
-                meta.will_notify = false;
-                let summary = format!("{name} returned", name = sub.name);
-                let time = sub.return_time.with_timezone(&Local);
-                let time_str = time.format("%b%e, %Y, %I:%M%p").to_string();
-                let body = format!(
-                    "{name} ({char_name} «{tag}») returned on {time_str}",
-                    name = sub.name,
-                    char_name = sub.character_name,
-                    tag = sub.tag
-                );
-                Notification::new()
-                    .summary(&summary)
-                    .body(&body)
-                    .icon("dialog-information")
-                    .show()?;
-            }
-            notifs_data.insert(sub.id, meta);
         }
         if let Some(dangling_push_notif) = current_pushover_notif {
             bridge_json_payload.insert(current_id, dangling_push_notif);
