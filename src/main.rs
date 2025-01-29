@@ -45,7 +45,7 @@ fn main_daemon() -> anyhow::Result<()> {
     loop {
         let subs = get_submarine_info(&db)?;
         let mut bridge_json_payload = serde_json::Map::new();
-        let mut subs_in_group: u32 = 1;
+        let mut subs_in_group: u32 = 0;
         let mut previous_return_time: Option<DateTime<Utc>> = None;
         let mut current_pushover_notif: Option<Value> = None;
         let mut current_id = "".to_string();
@@ -107,6 +107,7 @@ fn main_daemon() -> anyhow::Result<()> {
 
             if sub.return_time > Local::now() {
                 // Add a notification object to the pushover bridge API JSON payload
+                subs_in_group += 1;
                 let time = sub.return_time.with_timezone(&Local);
                 let time_str = time.format("%b %e, %Y, %I:%M%p").to_string();
                 let body = if subs_in_group > 1 {
@@ -140,19 +141,17 @@ fn main_daemon() -> anyhow::Result<()> {
                 current_id = format!("{char_name}«{tag}»-{message_count}", char_name = sub.character_name, tag = sub.tag);
                 if let Some(prev_time) = previous_return_time {
                     if sub.return_time.timestamp_millis() - prev_time.timestamp_millis() > 300000 {
-                        bridge_json_payload.insert(current_id.clone(), pushover_notif);
-                        previous_return_time = None;
-                        current_pushover_notif = None;
-                        subs_in_group = 0;
+                        bridge_json_payload.insert(current_id.clone(), current_pushover_notif.unwrap());
+                        previous_return_time = Some(sub.return_time);
+                        current_pushover_notif = Some(pushover_notif);
+                        subs_in_group = 1;
                         message_count += 1;
                     } else {
                         previous_return_time = Some(sub.return_time);
-                        subs_in_group += 1;
                         current_pushover_notif = Some(pushover_notif);
                     }
                 } else {
                     previous_return_time = Some(sub.return_time);
-                    subs_in_group += 1;
                     current_pushover_notif = Some(pushover_notif);
                 }
             }
