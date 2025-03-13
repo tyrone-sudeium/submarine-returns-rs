@@ -22,6 +22,8 @@ macro_rules! debug_println {
 const SUBTRACKER_FOLDER: &str = r#"AppData\Roaming\XIVLauncher\pluginConfigs\SubmarineTracker"#;
 #[cfg(target_os = "linux")]
 const SUBTRACKER_FOLDER: &str = ".xlcore/pluginConfigs/SubmarineTracker";
+#[cfg(target_os = "macos")]
+const SUBTRACKER_FOLDER: &str = "Library/Application Support/XIV on Mac/pluginConfigs/SubmarineTracker";
 
 #[derive(Parser, Debug)]
 #[command(version)]
