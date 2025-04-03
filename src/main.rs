@@ -52,7 +52,7 @@ fn main_daemon() -> anyhow::Result<()> {
         let mut current_pushover_notif: Option<Value> = None;
         let mut current_id = "".to_string();
         let mut message_count: u32 = 0;
-        let has_changes = subs.iter().all(|sub| {
+        let has_changes = subs.iter().any(|sub| {
             let meta = notifs_data
             .get(&sub.id)
             .cloned()
