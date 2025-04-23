@@ -164,12 +164,18 @@ fn main_daemon() -> anyhow::Result<()> {
         if !bridge_json_payload.is_empty() {
             let payload = Value::Object(bridge_json_payload);
             debug_println!("pushover bridge json: {}", payload);
-            client
+            let res = client
                 .post(bridge_url)
                 .header("Authorization", format!("Bearer {}", bridge_psk))
                 .json(&payload)
-                .send()?;
+                .send();
             // ... and honestly don't care about the response. It either keeps working or it ain't
+            match res {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                }
+            }
         }
 
         std::thread::sleep(Duration::from_secs(1));
