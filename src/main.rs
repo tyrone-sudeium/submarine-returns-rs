@@ -142,7 +142,7 @@ fn main_daemon() -> anyhow::Result<()> {
                 });
                 current_id = format!("{char_name}«{tag}»-{message_count}", char_name = sub.character_name, tag = sub.tag);
                 if let Some(prev_time) = previous_return_time {
-                    if sub.return_time.timestamp_millis() - prev_time.timestamp_millis() > 300000 {
+                    if sub.return_time.timestamp_millis() - prev_time.timestamp_millis() > 1200000 {
                         bridge_json_payload.insert(current_id.clone(), current_pushover_notif.unwrap());
                         previous_return_time = Some(sub.return_time);
                         current_pushover_notif = Some(pushover_notif);
